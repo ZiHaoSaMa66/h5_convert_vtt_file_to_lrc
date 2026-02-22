@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTT to LRC Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script>
+    if (typeof JSZip === 'undefined') {
+        const s = document.createElement('script');
+        s.src = './js/jszip.min.js';
+        s.onerror = () => console.error('load JSZip local js');
+        document.head.appendChild(s);
+        console.debug('loaded JSZip local js');
+    }
+    </script>
+
+    <!-- 引入 FileSaver（CDN + 本地降级） -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script>
+    if (typeof saveAs === 'undefined') {
+        const s = document.createElement('script');
+        s.src = './js/FileSaver.min.js';
+        s.onerror = () => console.error('load FileSaver local js failed');
+        document.head.appendChild(s);
+        console.debug('loaded FileSaver local js');
+    }
+    </script>
+
+    <style>
+        :root {
+            --bg-color: #0f1115;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --text-main: #c9d1d9;
+            --text-sub: #8b949e;
+            --accent: #58a6ff;
+            --accent-hover: #1f6feb;
+            --success: #238636;
+            --danger: #da3633;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+        }
+
+        header {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+
+        p.subtitle {
+            color: var(--text-sub);
+            font-size: 14px;
+        }
+
+        /* 拖拽区域 */
+        .drop-zone {
+            background-color: var(--card-bg);
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 60px 20px;
+            text-align: center;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .drop-zone.drag-over {
+            border-color: var(--accent);
+            background-color: rgba(88, 166, 255, 0.1);
+        }
+
+        .drop-zone p {
+            color: var(--text-sub);
+            font-size: 15px;
+            pointer-events: none;
+        }
+
+        .drop-zone strong {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        input[type="file"] {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        /* 文件列表 */
+        .file-list {
+            margin-top: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .file-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .file-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .file-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-main);
+        }
+
+        .file-status {
+            font-size: 12px;
+            color: var(--text-sub);
+        }
+
+        .file-status.success { color: #3fb950; }
+        .file-status.error { color: var(--danger); }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        button {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--border-color);
+        }
+
+        button.primary {
+            background-color: var(--success);
+            border-color: rgba(240,246,252,0.1);
+            color: white;
+        }
+        button.primary:hover { background-color: #2ea043; }
+
+        /* 底部操作栏 */
+        .action-bar {
+            margin-top: 30px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        .action-bar.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        .btn-large {
+            padding: 10px 24px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        /* 预览 Modal (可选，简化版直接不展示预览，保持界面干净) */
+        .empty-state {
+            text-align: center;
+            color: var(--text-sub);
+            margin-top: 40px;
+            font-size: 14px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>VTT to LRC Converter</h1>
+        <!-- by qwen3.5-plus and zihao debug -->
+        <p class="subtitle">Drag & Drop .vtt files to convert instantly.</p>
+    </header>
+
+    <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" multiple accept=".vtt">
+        <p>Drag & Drop files here or <strong>Click to Upload</strong></p>
+    </div>
+
+    <div class="action-bar" id="actionBar">
+        <button class="btn-large" onclick="clearAll()">Clear All</button>
+        <button class="btn-large" onclick="downloadAllSingleFiles()">Download All Single File</button>
+        <button class="btn-large primary" onclick="downloadAllZip()">Download All (.zip)</button>
+    </div>
+
+    <div class="file-list" id="fileList">
+        <!-- 文件列表将动态插入这里 -->
+    </div>
+
+    
+    <div class="empty-state" id="emptyState">No files processed yet.</div>
+</div>
+
+<script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileListEl = document.getElementById('fileList');
+    const actionBar = document.getElementById('actionBar');
+    const emptyState = document.getElementById('emptyState');
+
+    let processedFiles = []; // 存储 { name, content, blob }
+
+    // 拖拽事件处理
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.add('drag-over'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.remove('drag-over'), false);
+    });
+
+    dropZone.addEventListener('drop', handleDrop, false);
+    fileInput.addEventListener('change', handleFiles, false);
+
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        handleFiles({ target: { files: files } });
+    }
+
+    function handleFiles(e) {
+        const files = [...e.target.files];
+        if (files.length === 0) return;
+
+        files.forEach(file => {
+            if (file.name.endsWith('.vtt')) {
+                processFile(file);
+            }
+        });
+        
+        updateUIState();
+    }
+
+    function processFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const content = e.target.result;
+            const lrcContent = convertVttToLrc(content);
+            
+            const fileName = file.name.replace(/\.vtt$/i, '.lrc');
+            
+            processedFiles.push({
+                name: fileName,
+                content: lrcContent,
+                blob: new Blob([lrcContent], { type: "text/plain;charset=utf-8" })
+            });
+
+            renderFileItem(fileName, lrcContent);
+            updateUIState();
+        };
+        reader.readAsText(file);
+    }
+
+    function convertVttToLrc(vttText) {
+        const lines = vttText.split(/\r?\n/);
+        const lrcLines = [];
+        
+        // 正则匹配时间轴：00:00:00.000 --> 00:00:00.000
+        // 兼容有无序号的情况
+        const timeRegex = /^(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/;
+        // 匹配纯数字序号行 (例如 "1", "2")，用于跳过
+        const indexRegex = /^\d+$/;
+
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+
+            // 1. 跳过 WEBVTT 头部
+            if (line.startsWith('WEBVTT') || line.startsWith('Kind:') || line.startsWith('Language:')) {
+                continue;
+            }
+
+            // 2. 跳过空行
+            if (line === '') continue;
+
+            // 3. 跳过纯数字序号行
+            if (indexRegex.test(line)) continue;
+
+            // 4. 尝试匹配时间轴
+            const match = line.match(timeRegex);
+            if (match) {
+                // 提取开始时间
+                const mm = match[2]; // 分
+                const ss = match[3]; // 秒
+                const ms = match[4].substring(0, 2); // 毫秒取前两位 (LRC 标准通常是 xx)
+                
+                const timeTag = `[${mm}:${ss}.${ms}]`;
+                
+                let textLine = "";
+                let j = i + 1;
+                while(j < lines.length) {
+                    let nextLine = lines[j].trim();
+                    if (nextLine !== "" && !timeRegex.test(nextLine) && !indexRegex.test(nextLine) && !nextLine.startsWith('WEBVTT')) {
+                        textLine = nextLine;
+                        break;
+                    }
+                    j++;
+                }
+
+                if (textLine) {
+                    lrcLines.push(`${timeTag} ${textLine}`);
+                }
+            }
+        }
+        return lrcLines.join('\n');
+    }
+
+    function renderFileItem(name, content) {
+        const div = document.createElement('div');
+        div.className = 'file-item';
+        div.innerHTML = `
+            <div class="file-info">
+                <span class="file-name">${name}</span>
+                <span class="file-status success">Converted Ready</span>
+            </div>
+            <div class="btn-group">
+                <button onclick="downloadSingle('${name}')">Download</button>
+                <button onclick="previewContent(this)">Preview</button>
+            </div>
+        `;
+        // 将内容绑定到按钮上以便下载
+        div.querySelector('button:first-child').dataset.content = content;
+        div.querySelector('button:first-child').dataset.name = name;
+        
+        // 预览按钮逻辑
+        const previewBtn = div.querySelector('button:last-child');
+        previewBtn.onclick = () => {
+            alert(content); // 简单预览，实际项目中可用 Modal
+        };
+
+        fileListEl.appendChild(div);
+    }
+
+    function downloadSingle(name) {
+        // 找到对应的文件对象
+        const fileObj = processedFiles.find(f => f.name === name);
+        if (fileObj) {
+            saveAs(fileObj.blob, fileObj.name);
+        }
+    }
+
+    function downloadAllSingleFiles() {
+        // 批量下载单个文件 
+        processedFiles.map((f) => {
+            if (f) {
+                saveAs(f.blob,f.name)
+            }
+        })
+    }
+
+    function downloadAllZip() {
+        if (processedFiles.length === 0) return;
+
+        const zip = new JSZip();
+        processedFiles.forEach(file => {
+            zip.file(file.name, file.content);
+        });
+
+        zip.generateAsync({type:"blob"})
+        .then(function(content) {
+            saveAs(content, "subtitles_converted.zip");
+        });
+    }
+
+    function clearAll() {
+        processedFiles = [];
+        fileListEl.innerHTML = '';
+        updateUIState();
+        fileInput.value = ''; // 重置 input
+    }
+
+    function updateUIState() {
+        if (processedFiles.length > 0) {
+            actionBar.classList.add('active');
+            emptyState.style.display = 'none';
+        } else {
+            actionBar.classList.remove('active');
+            emptyState.style.display = 'block';
+        }
+    }
+</script>
+
+</body>
+</html>
